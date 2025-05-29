@@ -46,31 +46,52 @@ _start:
 	;call read_input
 	;pop rax
 
-	mov rdx, 0
-	gradient_loop:
-		xor rcx, rcx
-		white_loop:
-			mov byte[rax + rcx], dl
-			mov byte[rax + rcx + 1], 100
-			mov byte[rax + rcx + 2], 230
-			add rcx, 3
-			cmp rcx, IMG_SIZE
-			jl white_loop
+	xor rcx, rcx
+	white_loop:
+		mov byte[rax + rcx], 140
+		mov byte[rax + rcx + 1], 120
+		mov byte[rax + rcx + 2], 90
+		add rcx, 3
+		cmp rcx, IMG_SIZE
+		jl white_loop
 
-		push rax
-		push rdx
-			call write_image
-			mov rax, 300
-			call sleep_ms
-		pop rdx
-		pop rax
+	mov r15, rax		; data pointer
+	xor r14, r14		; x value
+	mov r13, 384		; y offset
+	zigzag:
 
-		add rdx, 10
-		cmp rdx, 230
-		jl gradient_loop
+		mov eax, r14d	; put x into eax for division
+		mov edx, 0
+		mov ecx, BLOCK
+		div ecx			; divide by full block width, we really only care about the remainder
 
+		cmp edx, HALF_BLOCK	; in the case that we're over halfway, reverse direction
+		jle skip_down
+			sub edx, BLOCK
+			imul edx, -1
+		skip_down:
+
+		sar edx, 1		; divide by 2 for slope
+		mov r12d, edx
+		add r12, r13
+		imul r12, WIDTH
+		add r12, r14
+		imul r12, 3
+
+		mov byte[r15 + r12], 0
+		mov byte[r15 + r12 + 1], 0
+		mov byte[r15 + r12 + 2], 0
+
+		inc r14
+		cmp r14, WIDTH
+		jl zigzag
+	mov rax, r15		; putting the data pointer back in rax
+
+	push rax
+		call write_image
+		mov rax, 300
+	pop rax
 	call free
-
 
 	; The unix exit
 	mov rax, 0			; success
@@ -134,7 +155,7 @@ alloc:			; (rax byte_size -- rax data[])
 	mov rdi, 0			; The address, 0 because I have no preference
 	mov rax, 9			; 9 is mmap
 	syscall
-	
+
 	sub rbx, 8
 	mov qword[rax], rbx	; saving the mmap-ed size (actual size - 8 because I don't count the size value)
 	add rax, 8			; pointer to start of memory
@@ -172,17 +193,21 @@ sleep_ms:		; (rax milliseconds -- rax syscall_returned)
 		dq 11; length
 	greeting:
 		db "Hey there!", 10
-		
+
 	image_name:
 		db "./worm.ppm", 0
-	
+
 	;ppm_header.count:
 	;	dq 15
 	ppm_header:
-		db "P6", 10, "720 720", 10, "255", 10
-	WIDTH equ 720
-	HEIGHT equ 720
-	IMG_SIZE equ WIDTH*HEIGHT*3
+		db "P6", 10, "768 768", 10, "255", 10
+	WIDTH equ 768
+	HEIGHT equ 768
+	BYTE_WIDTH equ WIDTH*3
+	IMG_SIZE equ BYTE_WIDTH*HEIGHT
+
+	BLOCK equ WIDTH/16
+	HALF_BLOCK equ BLOCK/2
 
 filesize equ $ - $$; This is for the custom ELF header.
 
