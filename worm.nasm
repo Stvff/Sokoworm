@@ -39,30 +39,45 @@ _start:
 	;mov rax, greeting
 	;call print_string
 
-	mov rax, 11
+	mov rax, IMG_SIZE
 	call alloc
 
 	;push rax
 	;call read_input
 	;pop rax
-	
-	push rax
-	mov rax, greeting
-	mov rcx, bmp_name
-	call write_whole_file
-	pop rax
-	
+
+	mov rdx, 0
+	gradient_loop:
+		xor rcx, rcx
+		white_loop:
+			mov byte[rax + rcx], dl
+			mov byte[rax + rcx + 1], 100
+			mov byte[rax + rcx + 2], 230
+			add rcx, 3
+			cmp rcx, IMG_SIZE
+			jl white_loop
+
+		push rax
+		push rdx
+			call write_image
+			mov rax, 300
+			call sleep_ms
+		pop rdx
+		pop rax
+
+		add rdx, 10
+		cmp rdx, 230
+		jl gradient_loop
+
 	call free
 
-	mov rax, 10
-	call sleep_ms
 
 	; The unix exit
 	mov rax, 0			; success
 	call exit
 
 read_input:		; (rax buffer[] -- rax syscall_returned)
-	mov rdx, qword[rax - 8]	; the size is stored before the buffer
+	mov rdx, [rax - 8]	; the size is stored before the buffer
 	mov rsi, rax		; the buffer pointer
 	mov rdi, 0			; stdin
 	mov rax, 0			; 0 is read
@@ -70,34 +85,41 @@ read_input:		; (rax buffer[] -- rax syscall_returned)
 	ret
 
 print_string:	; (rax string[] -- rax syscall_returned)
-	mov rdx, qword[rax - 8]	; the length is stored before the buffer
+	mov rdx, [rax - 8]	; the length is stored before the buffer
 	mov rsi, rax		; Putting the text
 	mov rdi, 1			; stdout
 	mov rax, 1			; 1 is write
 	syscall
 	ret
 
-write_whole_file:	; (rax data[], rcx filename_zero_terminated[] -- rax syscall_returned)
-	push rax
+write_image:	; (rax data[] -- rax syscall_returned)
+	push rax			; save data pointer
 
 	mov rdx, 420		; 0o644: user 6 rw, group 4 r, other 4 r
-	mov rsi, 0x0242		; 0x2 (read-write) | 0x4 (create) | 0x200 (truncate)
-	mov rdi, rcx		; filename
+	mov rsi, 0x0242		; 0x2 (read-write) | 0x40 (create) | 0x200 (truncate)
+	mov rdi, image_name	; filename
 	mov rax, 2			; 2 is open
 	syscall
 
-	pop rcx
-	push rax
+	push rax			; save file descriptor
 
-	mov rdx, qword[rcx - 8]	; the length is stored before the buffer
-	mov rsi, rcx		; data pointer
-	mov rdi, rax		; the just-opened file
+	mov rdx, 15			; length of ppm header
+	mov rsi, ppm_header	; the actual header
+	mov rdi, [rsp]		; the file descriptor
 	mov rax, 1			; 1 is write
 	syscall
 
-	pop rdi				; the file descriptor that I pushed onto the stack earlier
+	mov rcx, [rsp + 8]
+	mov rdx, [rcx - 8]	; the length is stored before the buffer
+	mov rsi, rcx		; data pointer
+	mov rdi, [rsp]		; the file descriptor
+	mov rax, 1			; 1 is write
+	syscall
+
+	mov rdi, [rsp]		; the file descriptor
 	mov rax, 3			; 3 is close
 	syscall
+	add rsp, 16
 	ret
 
 alloc:			; (rax byte_size -- rax data[])
@@ -121,7 +143,7 @@ alloc:			; (rax byte_size -- rax data[])
 free:			; (rax data[] -- rax syscall_returned)
 	sub rax, 8			; Reset the pointer to the actual start of the buffer
 	add qword[rax], 8	; , and the actual length of it as well
-	mov rsi, qword[rax]	; the size
+	mov rsi, [rax]		; the size
 	mov rdi, rax		; the pointer
 	mov rax, 11			; 11 us unmap
 	syscall
@@ -151,8 +173,16 @@ sleep_ms:		; (rax milliseconds -- rax syscall_returned)
 	greeting:
 		db "Hey there!", 10
 		
-	bmp_name:
-		db "./worm.bmp", 0
+	image_name:
+		db "./worm.ppm", 0
+	
+	;ppm_header.count:
+	;	dq 15
+	ppm_header:
+		db "P6", 10, "720 720", 10, "255", 10
+	WIDTH equ 720
+	HEIGHT equ 720
+	IMG_SIZE equ WIDTH*HEIGHT*3
 
 filesize equ $ - $$; This is for the custom ELF header.
 
