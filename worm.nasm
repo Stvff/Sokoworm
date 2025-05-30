@@ -41,6 +41,7 @@ _start:
 
 	mov rax, IMG_SIZE
 	call alloc
+	mov r15, rax		; data pointer is always in r15
 
 	;push rax
 	;call read_input
@@ -54,7 +55,6 @@ _start:
 		add rcx, 3
 		cmp rcx, IMG_SIZE
 		jl clear_loop
-	mov r15, rax		; data pointer
 
 	mov r9, 0
 	floor_loop:
@@ -141,15 +141,55 @@ _start:
 	jl floor_loop
 
 	mov rax, r15		; putting the data pointer back in rax
-	push rax
-		call write_image
-		mov rax, 300
-	pop rax
+	call write_image
+
+	mov rax, r15		; putting the data pointer back in rax
 	call free
 
 	; The unix exit
 	mov rax, 0			; success
 	call exit
+
+get_current_block_info:	; (rax x_coord, rcx y_coord -- rax colour, rcx blocktype)
+	push rax
+	push rcx
+	mov rax, [current_level]
+	cmp byte[current_level + 8], 0
+	je first_floor_block_info
+		xor rcx, rcx
+		mov cl, [rax]
+		imul rcx, 3
+		add rax, rcx
+		inc rax
+	first_floor_block_info:
+	xor rcx, rcx
+	mov cl, [rax]
+	imul rcx, 3
+	inc rax
+	add rcx, rax
+	push rcx
+	block_info_check_loop:
+		xor rcx, rcx
+		mov cl, [rax]
+		cmp cl, [rsp + 16]
+		jne continue_block_info_check_loop
+		mov cl, [rax + 1]
+		cmp cl, [rsp + 8]
+		jne continue_block_info_check_loop
+			mov cl, [rax + 2]
+			mov rax, [colour_table + rcx*8]
+			jmp end_of_info_check
+
+		continue_block_info_check_loop:
+		add rax, 3
+		cmp rax, [rsp]
+		jl block_info_check_loop
+
+	mov rax, water_colour
+	mov rcx, 0
+	end_of_info_check:
+	add rsp, 24
+	ret
 
 read_input:		; (rax buffer[] -- rax syscall_returned)
 	mov rdx, [rax - 8]	; the size is stored before the buffer
@@ -242,47 +282,6 @@ sleep_ms:		; (rax milliseconds -- rax syscall_returned)
 	add rsp, 16
 	ret
 
-get_current_block_info:	; (rax x_coord, rcx y_coord -- rax colour, rcx blocktype)
-	push rax
-	push rcx
-	mov rax, [current_level]
-	cmp byte[current_level + 8], 0
-	je first_floor_block_info
-		xor rcx, rcx
-		mov cl, [rax]
-		imul rcx, 3
-		add rax, rcx
-		inc rax
-	first_floor_block_info:
-	xor rcx, rcx
-	mov cl, [rax]
-	imul rcx, 3
-	inc rax
-	add rcx, rax
-	push rcx
-	block_info_check_loop:
-		xor rcx, rcx
-		mov cl, [rax]
-		cmp cl, [rsp + 16]
-		jne continue_block_info_check_loop
-		mov cl, [rax + 1]
-		cmp cl, [rsp + 8]
-		jne continue_block_info_check_loop
-			mov cl, [rax + 2]
-			mov rax, [colour_table + rcx*8]
-			jmp end_of_info_check
-
-		continue_block_info_check_loop:
-		add rax, 3
-		cmp rax, [rsp]
-		jl block_info_check_loop
-
-	mov rax, water_colour
-	mov rcx, 0
-	end_of_info_check:
-	add rsp, 24
-	ret
-
 .data:
 	greeting.count:
 		dq 11; length
@@ -296,31 +295,36 @@ get_current_block_info:	; (rax x_coord, rcx y_coord -- rax colour, rcx blocktype
 		db 0
 
 	level_1:
-		db 4
-		db 3, 12, 1
-		db 4, 12, 2
-		db 4, 14, 1
-		db 3, 14, 3
-		db 6
-		db 2, 10, 4
-		db 1, 6, 5
-		db 1, 7, 5
-		db 2, 8, 5
-		db 2, 9, 5
-		db 3, 10, 5
+		db 9
+		db 1, 13, 1
+		db 2, 14, 1
+		db 2, 15, 1
+		db 3, 16, 1
+		db 3, 17, 1
+		db 4, 18, 1
+		db 4, 19, 2
+		db 5, 20, 1
+		db 5, 21, 3
+		db 3
+		db 1, 11, 5
+		db 2, 12, 6
+		db 3, 15, 4
 	level_2:
 		db 0
+		db 0, 0, 0
 		db 0
+		db 0, 0, 0
 
 	colour_table:
-		dq water_colour, ground_colour, hole_colour, wormhole_colour, block_colour, worm_colour
+		dq water_colour, ground_colour, hole_colour, wormhole_colour, block_colour, worm_colour, worm_head_colour
 
-	water_colour: db 100, 105, 110, 90, 95, 100
-	ground_colour: db 150, 130, 80, 130, 110, 80
-	hole_colour: db 220, 70, 40, 210, 60, 30
-	wormhole_colour: db 20, 20, 20, 0, 0, 0
-	block_colour: db 100, 100, 100, 70, 70, 70
-	worm_colour: db 230, 170, 170, 220, 160, 160
+	water_colour:     db 100, 105, 110, 90, 95, 100
+	ground_colour:    db 150, 130, 80, 130, 110, 80
+	hole_colour:      db 220, 70, 40, 210, 60, 30
+	wormhole_colour:  db 20, 20, 20, 0, 0, 0
+	block_colour:     db 100, 100, 100, 70, 70, 70
+	worm_colour:      db 230, 170, 170, 220, 160, 160
+	worm_head_colour: db 220, 160, 160, 210, 150, 150
 
 	;ppm_header.count:
 	;	dq 15
