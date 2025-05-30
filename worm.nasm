@@ -47,46 +47,95 @@ _start:
 	;pop rax
 
 	xor rcx, rcx
-	white_loop:
-		mov byte[rax + rcx], 140
-		mov byte[rax + rcx + 1], 120
-		mov byte[rax + rcx + 2], 90
+	clear_loop:
+		mov byte[rax + rcx], 110
+		mov byte[rax + rcx + 1], 150
+		mov byte[rax + rcx + 2], 190
 		add rcx, 3
 		cmp rcx, IMG_SIZE
-		jl white_loop
+		jl clear_loop
 
 	mov r15, rax		; data pointer
-	xor r14, r14		; x value
-	mov r13, 384		; y offset
-	zigzag:
+	xor r13, r13		; y offset
+	mov r12, r12		; y coordinate of block
+	per_row:
+			xor r14, r14		; x value
+			over_width:
+				mov rax, r14	; put x into eax for division
+				mov rdx, 0
+				mov rcx, BLOCK
+				div ecx			; divide by full block width, we really only care about the remainder
+				mov r8, rax		; x coordinate of block
 
-		mov eax, r14d	; put x into eax for division
-		mov edx, 0
-		mov ecx, BLOCK
-		div ecx			; divide by full block width, we really only care about the remainder
+				sar rdx, 1		; y = x/2
+				mov rcx, rdx	; upper limit of ground
+				mov rbx, rdx	; lower limit of ground
+				mov rax, rdx	; top of ground
+				cmp rdx, QUAR_BLOCK	; in the case that we're over halfway, reverse direction
+				jg second_half
+				first_half:
+					imul rcx, -1
+					add rcx, QUAR_BLOCK
+					add rbx, THQU_BLOCK
+					add rax, QUAR_BLOCK
+				jmp end_of_halves
+				second_half:
+					sub rcx, QUAR_BLOCK
+					imul rbx, -1
+					add rbx, ONQU_BLOCK
+					imul rax, -1
+					add rax, THQU_BLOCK
+				end_of_halves:
+	
+				cmp rcx, r13
+				jg end_of_drawing
+				cmp rbx, r13
+				jle end_of_drawing
+					imul r11, r12, QUAR_BLOCK	; y offset from block
+					add r11, r13		; y offset in block
+					imul r11, WIDTH
+					
+					mov r10, r12
+					and r10, 1
+					cmp r10, 1
+					jne skip_odd_alternation
+						add r11, HALF_BLOCK
+					skip_odd_alternation:
+					add r11, r14		; x offset
+					imul r11, 3			; byte width
+					add r11, r15		; data offset so this is a pointer
+				push rax
+					mov rax, r8
+					mov rcx, r12
+					call get_current_block_info
+					;mov rcx, ground_colour
+				pop r8
+				cmp r8, r13
+				jg actual_drawing
+					add rcx, 3
+				actual_drawing:
+					cmp rax, 0
+					je end_of_drawing
+					mov bl, [rcx]
+					mov byte[r11], bl
+					mov bl, [rcx + 1]
+					mov byte[r11 + 1], bl
+					mov bl, [rcx + 2]
+					mov byte[r11 + 2], bl
+	
+				end_of_drawing:
+				inc r14
+				cmp r14, WIDTH
+				jl over_width
+		inc r13
+		cmp r13, BLOCK
+		jl per_row
+	xor r13, r13
+	inc r12
+	cmp r12, 29
+	jl per_row
 
-		cmp edx, HALF_BLOCK	; in the case that we're over halfway, reverse direction
-		jle skip_down
-			sub edx, BLOCK
-			imul edx, -1
-		skip_down:
-
-		sar edx, 1		; divide by 2 for slope
-		mov r12d, edx
-		add r12, r13
-		imul r12, WIDTH
-		add r12, r14
-		imul r12, 3
-
-		mov byte[r15 + r12], 0
-		mov byte[r15 + r12 + 1], 0
-		mov byte[r15 + r12 + 2], 0
-
-		inc r14
-		cmp r14, WIDTH
-		jl zigzag
 	mov rax, r15		; putting the data pointer back in rax
-
 	push rax
 		call write_image
 		mov rax, 300
@@ -188,14 +237,76 @@ sleep_ms:		; (rax milliseconds -- rax syscall_returned)
 	add rsp, 16
 	ret
 
+get_current_block_info:	; (rax x_coord, rcx y_coord -- rax type, rcx colour)
+	push rax
+	push rcx
+	mov rax, [current_level]
+	xor rcx, rcx
+	mov cl, [rax]
+	imul rcx, 3
+	inc rax
+	add rcx, rax
+	push rcx
+	block_info_check_loop:
+		xor rcx, rcx
+		mov cl, [rax]
+		cmp cl, [rsp + 16]
+		jne continue_block_info_check_loop
+		mov cl, [rax + 1]
+		cmp cl, [rsp + 8]
+		jne continue_block_info_check_loop
+			mov cl, [rax + 2]
+			mov rax, rcx
+			cmp rax, 2
+			jg block_info_wormhole
+			jl block_info_ground
+				mov rcx, hole_colour
+				jmp end_of_info_check
+			block_info_ground:
+				mov rcx, ground_colour
+				jmp end_of_info_check
+			block_info_wormhole:
+				mov rcx, wormhole_colour
+				jmp end_of_info_check
+
+		continue_block_info_check_loop:
+		add rax, 3
+		cmp rax, [rsp]
+		jl block_info_check_loop
+
+	mov rax, 0
+	mov rcx, water_colour
+	end_of_info_check:
+	add rsp, 24
+	ret
+
+
 .data:
 	greeting.count:
 		dq 11; length
 	greeting:
 		db "Hey there!", 10
-
 	image_name:
 		db "./worm.ppm", 0
+
+	current_level:
+		dq level_1, 0
+
+	level_1:
+		db 4
+		db 3, 12, 1
+		db 4, 12, 2
+		db 4, 14, 1
+		db 3, 14, 3
+		db 0
+	level_2:
+		db 0
+		db 0
+
+	water_colour: db 100, 105, 110, 90, 95, 100
+	ground_colour: db 150, 130, 80, 130, 110, 80
+	hole_colour: db 220, 70, 40, 210, 60, 30
+	wormhole_colour: db 20, 20, 20, 0, 0, 0
 
 	;ppm_header.count:
 	;	dq 15
@@ -206,8 +317,11 @@ sleep_ms:		; (rax milliseconds -- rax syscall_returned)
 	BYTE_WIDTH equ WIDTH*3
 	IMG_SIZE equ BYTE_WIDTH*HEIGHT
 
-	BLOCK equ WIDTH/16
+	BLOCK equ WIDTH/8
 	HALF_BLOCK equ BLOCK/2
+	QUAR_BLOCK equ BLOCK/4
+	THQU_BLOCK equ 3*QUAR_BLOCK
+	ONQU_BLOCK equ 5*QUAR_BLOCK
 
 filesize equ $ - $$; This is for the custom ELF header.
 
