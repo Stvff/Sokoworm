@@ -36,22 +36,85 @@ program_header:
 	dq 0x1000		; p_align: align to linux page size (4096 bytes)
 
 _start:
-	;mov rax, greeting
-	;call print_string
+	mov rax, greeting
+	call print_string
 
 	mov rax, IMG_SIZE
 	call alloc
-	mov r15, rax		; data pointer is always in r15
+	mov r15, rax		; image data pointer is always in r15
 
-	;push rax
-	;call read_input
-	;pop rax
+	mov rax, UNDO_BUFFER_SIZE
+	add rax, 8
+	call alloc
+	push rax				; input history
+	mov qword[rax], 0		; initting history to zero
+
+	mov rax, 2
+	call alloc
+	push rax			; input
+
+	; stack:( +0 input, +8 history )
+	game_loop:
+	
+	mov rax, [rsp + 8]
+	call push_gamestate
+
+	mov rax, prompt
+	call print_string
+	mov rax, [rsp]
+	call read_input
+	mov rbx, -1
+	mov rcx, 1				; direction x
+	mov rdx, -1				; direction y
+	cmp byte[rax], "e"		; topleft
+		cmove rcx, rdx		; x-1, y-1
+	cmp byte[rax], "r"		; topright
+							; x+1, y-1
+	cmp byte[rax], "d"		; botleft
+		cmove rdx, rcx		; x-1, y+1
+		cmove rcx, rbx
+	cmp byte[rax], "f"		; botright
+		cmove rdx, rcx		; x+1, y+1
+
+	cmp byte[rax], "z"
+	jne skip_undo
+		mov rax, [rsp]
+		call pop_gamestate	
+		call pop_gamestate	
+		jmp game_loop
+	skip_undo:
+	cmp byte[rax], "q"
+		je quit
+
+	;push rcx
+	;push rdx
+	;; stack:( +0 dir_y, +8 dir_x, +16 input, +24 history )
+
+	; worm is always first blocks of a floor
+	mov rax, [current_level]
+	xor rbx, rbx
+	mov dl, [rax]
+	add rax, rbx
+	inc rax				; rax now points to the head of worm
+	xor r8, r8
+	mov r8b, [rax]
+	xor r9, r9
+	mov r9b, [rax+1]	; r8 xpos, r9 ypos
+	; first update xpos, based on the evenness of ypos, and negativeness of xdir
+	; update ypos
+	add r9, rdx
+	; update worm body (but not yet head)
+	; check if those coords already have something
+	; if it's a block, blockloop
+	; if it's a wormhole, next level
+	; if it's a hole, don't
+	; if it's water, don't
 
 	xor rcx, rcx
 	clear_loop:
-		mov byte[rax + rcx], 110
-		mov byte[rax + rcx + 1], 150
-		mov byte[rax + rcx + 2], 190
+		mov byte[r15 + rcx], 110
+		mov byte[r15 + rcx + 1], 150
+		mov byte[r15 + rcx + 2], 190
 		add rcx, 3
 		cmp rcx, IMG_SIZE
 		jl clear_loop
@@ -136,25 +199,109 @@ _start:
 	cmp r12, 29
 	jl per_row
 
-	inc byte[current_level + 8]
-	cmp byte[current_level + 8], 2
+	inc byte[current_floor]
+	cmp byte[current_floor], 2
 	jl floor_loop
+	mov byte[current_floor], 0
 
 	mov rax, r15		; putting the data pointer back in rax
 	call write_image
+	jmp game_loop
 
-	mov rax, r15		; putting the data pointer back in rax
-	call free
+	quit:
+	add rsp, 16			; user input buffer, input history buffer
 
 	; The unix exit
 	mov rax, 0			; success
 	call exit
 
-get_current_block_info:	; (rax x_coord, rcx y_coord -- rax colour, rcx blocktype)
+push_gamestate:		; (rax history_buffer -- rax history_buffer)
+	push rax
+
+	; check length of current level
+	call current_level_length
+
+	; allocate that size, copy over into it
+	push rax
+	call alloc
+	pop rcx
+	xor rbx, rbx
+	push_gamestate_copyloop:
+		mov rdx, [current_level]
+		mov dl, [rdx + rbx]
+		mov byte[rax + rbx], dl
+		inc rbx
+		cmp rbx, rcx
+		jl push_gamestate_copyloop
+
+	; shift history buffer to the right
+	push rax			; rax contains the level rn
+	mov rax, [rsp + 8]	; we're retrieving the history buffer
+	mov rbx, UNDO_BUFFER_SIZE
+	add rbx, rax
+	push_gamestate_shiftloop:
+		sub rbx, 8
+		mov rcx, qword[rbx]
+		mov qword[rbx + 8], rcx
+		cmp rbx, rax
+		jg push_gamestate_shiftloop
+		
+	; put remembered value on the history buffer
+	pop rax
+	mov qword[rsp], rax
+	pop rax
+	ret
+
+pop_gamestate:		; (rax history_buffer -- rax history_buffer)
+	; check top for zero
+	cmp qword[rax], 0
+	je pop_gamestate_end
+
+	push rax
+	; check length of current level
+	call current_level_length	; rax now has the length of current state
+
+	mov rbx, [rsp]				; rbx now has history_buffer
+	mov rbx, [rbx]				; rbx now has pointer to the previous state
+	mov rcx, [current_level]	; rcx now has pointer to the current state
+	; copy top of history into current_level
+	xor r8, r8
+	pop_gamestate_copyloop:
+		;mov dl, [rbx + r8]
+		;mov byte[rcx + r8], dl
+		inc r8
+		cmp r8, rax
+		jl pop_gamestate_copyloop
+
+	pop rax						; rax now has history_buffer
+	; shift history back up
+	xor rcx, rcx
+	pop_gamestate_shiftloop:
+		add rcx, 8
+		mov rbx, [rax + rcx]
+		mov qword[rax + rcx - 8], rbx
+		cmp rcx, UNDO_BUFFER_SIZE
+		jl pop_gamestate_shiftloop
+
+	;pop rax
+	pop_gamestate_end:
+	ret
+
+current_level_length:	; ( -- rax level_length)
+	mov rax, [current_level]
+	xor rdx, rdx
+	mov dl, [rax]
+	add rax, rdx
+	mov dl, [rax]
+	add rax, rdx
+	sub rax, [current_level]	; rax now contains level length
+	ret
+
+get_current_block_info:	; (rax x_coord, rcx y_coord -- rax colour, rcx blocktype, rdx block_pointer)
 	push rax
 	push rcx
 	mov rax, [current_level]
-	cmp byte[current_level + 8], 0
+	cmp byte[current_floor], 0
 	je first_floor_block_info
 		xor rcx, rcx
 		mov cl, [rax]
@@ -177,6 +324,7 @@ get_current_block_info:	; (rax x_coord, rcx y_coord -- rax colour, rcx blocktype
 		cmp cl, [rsp + 8]
 		jne continue_block_info_check_loop
 			mov cl, [rax + 2]
+			mov rdx, rax
 			mov rax, [colour_table + rcx*8]
 			jmp end_of_info_check
 
@@ -191,16 +339,20 @@ get_current_block_info:	; (rax x_coord, rcx y_coord -- rax colour, rcx blocktype
 	add rsp, 24
 	ret
 
-read_input:		; (rax buffer[] -- rax syscall_returned)
+read_input:		; (rax buffer[] -- rax buffer[], rdx syscall_returned)
+	push rax
 	mov rdx, [rax - 8]	; the size is stored before the buffer
 	mov rsi, rax		; the buffer pointer
 	mov rdi, 0			; stdin
 	mov rax, 0			; 0 is read
 	syscall
+	mov rax, rdx
+	pop rax
 	ret
 
 print_string:	; (rax string[] -- rax syscall_returned)
-	mov rdx, [rax - 8]	; the length is stored before the buffer
+	xor rdx, rdx
+	mov dl, byte[rax-1]	; the length is stored before the buffer
 	mov rsi, rax		; Putting the text
 	mov rdi, 1			; stdout
 	mov rax, 1			; 1 is write
@@ -255,14 +407,14 @@ alloc:			; (rax byte_size -- rax data[])
 	add rax, 8			; pointer to start of memory
 	ret
 
-free:			; (rax data[] -- rax syscall_returned)
-	sub rax, 8			; Reset the pointer to the actual start of the buffer
-	add qword[rax], 8	; , and the actual length of it as well
-	mov rsi, [rax]		; the size
-	mov rdi, rax		; the pointer
-	mov rax, 11			; 11 us unmap
-	syscall
-	ret
+;free:			; (rax data[] -- rax syscall_returned)
+;	sub rax, 8			; Reset the pointer to the actual start of the buffer
+;	add qword[rax], 8	; , and the actual length of it as well
+;	mov rsi, [rax]		; the size
+;	mov rdi, rax		; the pointer
+;	mov rax, 11			; 11 us unmap
+;	syscall
+;	ret
 
 exit:			; (rax error_code -- rax syscall_returned)
 	mov rdi, rax
@@ -270,29 +422,37 @@ exit:			; (rax error_code -- rax syscall_returned)
 	syscall
 	ret
 
-sleep_ms:		; (rax milliseconds -- rax syscall_returned)
-	imul rax, 1000000	; ms to ns
-	push rax
-	push 0				; struct timespec duration
+;sleep_ms:		; (rax milliseconds -- rax syscall_returned)
+;	imul rax, 1000000	; ms to ns
+;	push rax
+;	push 0				; struct timespec duration
 
-	mov rsi, 0			; rem (null, so not used)
-	mov rdi, rsp		; duration
-	mov rax, 35			; 35 is nanosleep
-	syscall
-	add rsp, 16
-	ret
+;	mov rsi, 0			; rem (null, so not used)
+;	mov rdi, rsp		; duration
+;	mov rax, 35			; 35 is nanosleep
+;	syscall
+;	add rsp, 16
+;	ret
 
 .data:
 	greeting.count:
-		dq 11; length
+		db 229; length
 	greeting:
-		db "Hey there!", 10
+		db "Welcome!", 10, "Open worm.ppm with xviewer, and put it next to this terminal.", 10,
+		db "The controls are:", 10
+		db "e for going topleft", 10, "r for topright", 10, "d for bottomleft", 10, "f for bottomright", 10,
+		db "(those are based on keyboard layout)", 10
+		db "z for undo", 10, "q for quit", 10, "Good luck!", 10
+
+		db 2
+	prompt:
+		db "> "
+
 	image_name:
 		db "./worm.ppm", 0
 
-	current_level:
-		dq level_1, 0
-		db 0
+	current_level: dq level_1
+	current_floor: db 0
 
 	level_1:
 		db 9
@@ -306,8 +466,8 @@ sleep_ms:		; (rax milliseconds -- rax syscall_returned)
 		db 5, 20, 1
 		db 5, 21, 3
 		db 3
-		db 1, 11, 5
 		db 2, 12, 6
+		db 1, 11, 5
 		db 3, 15, 4
 	level_2:
 		db 0
@@ -320,7 +480,7 @@ sleep_ms:		; (rax milliseconds -- rax syscall_returned)
 
 	water_colour:     db 100, 105, 110, 90, 95, 100
 	ground_colour:    db 150, 130, 80, 130, 110, 80
-	hole_colour:      db 220, 70, 40, 210, 60, 30
+	hole_colour:      db 100, 70, 40, 150, 60, 30
 	wormhole_colour:  db 20, 20, 20, 0, 0, 0
 	block_colour:     db 100, 100, 100, 70, 70, 70
 	worm_colour:      db 230, 170, 170, 220, 160, 160
@@ -340,6 +500,8 @@ sleep_ms:		; (rax milliseconds -- rax syscall_returned)
 	QUAR_BLOCK equ BLOCK/4
 	THQU_BLOCK equ 3*QUAR_BLOCK
 	ONQU_BLOCK equ 5*QUAR_BLOCK
+	
+	UNDO_BUFFER_SIZE equ 2048
 
 filesize equ $ - $$; This is for the custom ELF header.
 
