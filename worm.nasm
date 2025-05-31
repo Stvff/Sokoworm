@@ -55,60 +55,6 @@ _start:
 
 	; stack:( +0 input, +8 history )
 	game_loop:
-	
-	mov rax, [rsp + 8]
-	call push_gamestate
-
-	mov rax, prompt
-	call print_string
-	mov rax, [rsp]
-	call read_input
-	mov rbx, -1
-	mov rcx, 1				; direction x
-	mov rdx, -1				; direction y
-	cmp byte[rax], "e"		; topleft
-		cmove rcx, rdx		; x-1, y-1
-	cmp byte[rax], "r"		; topright
-							; x+1, y-1
-	cmp byte[rax], "d"		; botleft
-		cmove rdx, rcx		; x-1, y+1
-		cmove rcx, rbx
-	cmp byte[rax], "f"		; botright
-		cmove rdx, rcx		; x+1, y+1
-
-	cmp byte[rax], "z"
-	jne skip_undo
-		mov rax, [rsp]
-		call pop_gamestate	
-		call pop_gamestate	
-		jmp game_loop
-	skip_undo:
-	cmp byte[rax], "q"
-		je quit
-
-	;push rcx
-	;push rdx
-	;; stack:( +0 dir_y, +8 dir_x, +16 input, +24 history )
-
-	; worm is always first blocks of a floor
-	mov rax, [current_level]
-	xor rbx, rbx
-	mov dl, [rax]
-	add rax, rbx
-	inc rax				; rax now points to the head of worm
-	xor r8, r8
-	mov r8b, [rax]
-	xor r9, r9
-	mov r9b, [rax+1]	; r8 xpos, r9 ypos
-	; first update xpos, based on the evenness of ypos, and negativeness of xdir
-	; update ypos
-	add r9, rdx
-	; update worm body (but not yet head)
-	; check if those coords already have something
-	; if it's a block, blockloop
-	; if it's a wormhole, next level
-	; if it's a hole, don't
-	; if it's water, don't
 
 	xor rcx, rcx
 	clear_loop:
@@ -119,7 +65,6 @@ _start:
 		cmp rcx, IMG_SIZE
 		jl clear_loop
 
-	mov r9, 0
 	floor_loop:
 	xor r13, r13		; y offset
 	xor r12, r12		; y coordinate of block
@@ -206,6 +151,89 @@ _start:
 
 	mov rax, r15		; putting the data pointer back in rax
 	call write_image
+
+	mov rax, [rsp + 8]
+	call push_gamestate
+
+	mov rax, prompt
+	call print_string
+	mov rax, [rsp]
+	call read_input
+	mov rbx, -1
+	mov rcx, 1				; direction x
+	mov rdx, -1				; direction y
+	cmp byte[rax], "e"		; topleft
+		cmove rcx, rdx		; x-1, y-1
+		je figure_out_movement
+	cmp byte[rax], "r"		; topright
+							; x+1, y-1
+		je figure_out_movement
+	cmp byte[rax], "d"		; botleft
+		cmove rdx, rcx		; x-1, y+1
+		cmove rcx, rbx
+		je figure_out_movement
+	cmp byte[rax], "f"		; botright
+		cmove rdx, rcx		; x+1, y+1
+		je figure_out_movement
+
+	cmp byte[rax], "z"
+	jne skip_undo
+		mov rax, [rsp + 8]
+		call pop_gamestate
+		call pop_gamestate
+		jmp game_loop
+	skip_undo:
+	cmp byte[rax], "q"
+		je quit
+	jmp game_loop
+
+	figure_out_movement:
+	;push rcx
+	;push rdx
+	;pop rdx
+	;pop rcx
+
+	;push rcx
+	;push rdx
+	;; stack:( +0 dir_y, +8 dir_x, +16 input, +24 history )
+
+	; worm is always first blocks of a floor
+	mov rax, [current_level]
+	xor rbx, rbx
+	mov bl, [rax]
+	imul rbx, 3
+	inc rbx
+	add rax, rbx
+	inc rax				; rax now points to the head of worm
+	xor r8, r8
+	mov r8b, [rax]
+	xor r9, r9
+	mov r9b, [rax+1]	; r8 xpos, r9 ypos of worm
+	; first update xpos, based on the evenness of ypos, and negativeness of xdir
+	mov r10, r9
+	and r10, 1		; r10 is 1 if ypos is odd
+	cmp rcx, -1		; if xdir == -1, flip r10
+	jne skip_inversion
+		not r10
+		and r10, 1	; r10 is 0 if ypos is odd
+	skip_inversion:
+	imul rcx, r10
+	add r8b, cl
+
+	; update ypos
+	add r9b, dl
+
+	mov [rax], r8b
+	mov [rax+1], r9b
+
+	; update worm body (but not yet head)
+	; check if those coords already have something
+	; if it's a block, first update head, then blockloop
+		; blockloop: check coords in movement direction, update block (based on air or hole too), loop if something is found in the first part
+	; if it's a wormhole, next level
+	; if it's a hole, don't
+	; if it's water, don't
+
 	jmp game_loop
 
 	quit:
@@ -223,8 +251,8 @@ push_gamestate:		; (rax history_buffer -- rax history_buffer)
 
 	; allocate that size, copy over into it
 	push rax
-	call alloc
-	pop rcx
+	call alloc					; rax now contains the newly allocated level buffer
+	pop rcx						; rcx contains level_length
 	xor rbx, rbx
 	push_gamestate_copyloop:
 		mov rdx, [current_level]
@@ -235,7 +263,7 @@ push_gamestate:		; (rax history_buffer -- rax history_buffer)
 		jl push_gamestate_copyloop
 
 	; shift history buffer to the right
-	push rax			; rax contains the level rn
+	push rax					; rax still contained the newly allocated level buffer
 	mov rax, [rsp + 8]	; we're retrieving the history buffer
 	mov rbx, UNDO_BUFFER_SIZE
 	add rbx, rax
@@ -245,11 +273,11 @@ push_gamestate:		; (rax history_buffer -- rax history_buffer)
 		mov qword[rbx + 8], rcx
 		cmp rbx, rax
 		jg push_gamestate_shiftloop
-		
+
 	; put remembered value on the history buffer
-	pop rax
-	mov qword[rsp], rax
-	pop rax
+	pop rbx						; rbx now contains the newly allocated level buffer
+	pop rax						; rax is the history_buffer again
+	mov qword[rax], rbx
 	ret
 
 pop_gamestate:		; (rax history_buffer -- rax history_buffer)
@@ -267,8 +295,8 @@ pop_gamestate:		; (rax history_buffer -- rax history_buffer)
 	; copy top of history into current_level
 	xor r8, r8
 	pop_gamestate_copyloop:
-		;mov dl, [rbx + r8]
-		;mov byte[rcx + r8], dl
+		mov dl, [rbx + r8]
+		mov byte[rcx + r8], dl
 		inc r8
 		cmp r8, rax
 		jl pop_gamestate_copyloop
@@ -283,17 +311,21 @@ pop_gamestate:		; (rax history_buffer -- rax history_buffer)
 		cmp rcx, UNDO_BUFFER_SIZE
 		jl pop_gamestate_shiftloop
 
-	;pop rax
 	pop_gamestate_end:
 	ret
 
 current_level_length:	; ( -- rax level_length)
-	mov rax, [current_level]
+	mov rax, [current_level]	; rax has level pointer
+	xor rdx, rdx
+	mov dl, [rax]				; rdx has floor 1 block amount
+	imul rdx, 3
+	inc rdx						; *3 + 1 to get byte length of floor 1
+	add rax, rdx				; rax now points to floor 2
 	xor rdx, rdx
 	mov dl, [rax]
-	add rax, rdx
-	mov dl, [rax]
-	add rax, rdx
+	imul rdx, 3
+	inc rdx
+	add rax, rdx				; rax now points to 1 byte after floor 2
 	sub rax, [current_level]	; rax now contains level length
 	ret
 
@@ -465,10 +497,11 @@ exit:			; (rax error_code -- rax syscall_returned)
 		db 4, 19, 2
 		db 5, 20, 1
 		db 5, 21, 3
-		db 3
+		db 4
 		db 2, 12, 6
 		db 1, 11, 5
 		db 3, 15, 4
+		db 0, 0, 0
 	level_2:
 		db 0
 		db 0, 0, 0
@@ -483,8 +516,8 @@ exit:			; (rax error_code -- rax syscall_returned)
 	hole_colour:      db 100, 70, 40, 150, 60, 30
 	wormhole_colour:  db 20, 20, 20, 0, 0, 0
 	block_colour:     db 100, 100, 100, 70, 70, 70
-	worm_colour:      db 230, 170, 170, 220, 160, 160
-	worm_head_colour: db 220, 160, 160, 210, 150, 150
+	worm_colour:      db 220, 160, 160, 210, 150, 150
+	worm_head_colour: db 237, 170, 170, 230, 160, 160
 
 	;ppm_header.count:
 	;	dq 15
