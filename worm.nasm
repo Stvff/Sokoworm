@@ -65,6 +65,7 @@ _start:
 		cmp rcx, IMG_SIZE
 		jl clear_loop
 
+	mov byte[current_floor], 0
 	floor_loop:
 	xor r13, r13		; y offset
 	xor r12, r12		; y coordinate of block
@@ -190,11 +191,6 @@ _start:
 	figure_out_movement:
 	;push rcx
 	;push rdx
-	;pop rdx
-	;pop rcx
-
-	;push rcx
-	;push rdx
 	;; stack:( +0 dir_y, +8 dir_x, +16 input, +24 history )
 
 	; worm is always first blocks of a floor
@@ -206,35 +202,158 @@ _start:
 	add rax, rbx
 	inc rax				; rax now points to the head of worm
 	xor r8, r8
-	mov r8b, [rax]
 	xor r9, r9
+	mov r8b, [rax]
 	mov r9b, [rax+1]	; r8 xpos, r9 ypos of worm
+
 	; first update xpos, based on the evenness of ypos, and negativeness of xdir
 	mov r10, r9
-	and r10, 1		; r10 is 1 if ypos is odd
 	cmp rcx, -1		; if xdir == -1, flip r10
-	jne skip_inversion
+	jne skip_inversion_head_mvmt
 		not r10
-		and r10, 1	; r10 is 0 if ypos is odd
-	skip_inversion:
-	imul rcx, r10
-	add r8b, cl
-
+	skip_inversion_head_mvmt:
+	and r10, 1
+	imul r10, rcx
+	add r8b, r10b
 	; update ypos
 	add r9b, dl
 
+	; update worm body (but not yet head)
+	push rax
+	push word[rax]
+	add rax, 3
+	worm_body_update_loop:
+		pop bx
+		push word[rax]
+		mov [rax], bx
+		add rax, 3
+		cmp byte[rax + 2], 5
+		je worm_body_update_loop
+	pop bx
+
+	; check if those coords already have something
+	mov r10, rcx			; r10 is now xdir
+	mov r11, rdx			; r11 is now ydir
+	mov rax, r8
+	mov rcx, r9
+	mov byte[current_floor], 1
+	call get_current_block_info	; first check floor 1
+	cmp rcx, 0					; air
+	je check_floor_0
+	cmp rcx, 2					; a hole
+	je illegal_move
+	cmp rcx, 4					; a block
+	jne skip_block_loop
+	block_loop:
+		xor r12, r12
+		xor r13, r13
+		mov r14, rdx			; found_block_pointer
+		mov r12b, [r14]			; xpos
+		mov r13b, [r14 + 1]		; ypos
+
+		; first update xpos, based on the evenness of ypos, and negativeness of xdir
+		mov rax, r13
+		cmp r10, -1		; if xdir == -1, flip rax
+		jne skip_inversion_block_mvmt
+			not rax
+		skip_inversion_block_mvmt:
+		and rax, 1
+		imul rax, r10
+		add r12b, al
+		; update ypos
+		add r13b, r11b
+
+		; check floor 0
+		mov rax, r12
+		mov rcx, r13
+		add rcx, 2
+		mov byte[current_floor], 0
+		call get_current_block_info
+		; if below hole or air, fill that hole or air, set current blocktype to 0
+		cmp rcx, 0
+		je illegal_move
+		cmp rcx, 2
+		jne block_loop_floor_1
+			mov byte[r14 + 2], 0
+			mov byte[rdx + 2], 4
+
+		block_loop_floor_1:
+		mov rax, r12
+		mov rcx, r13
+		mov byte[current_floor], 1
+		call get_current_block_info
+		cmp rcx, 4					; a block
+		jne block_loop_skip_block
+			mov [r14], r12b			; xpos
+			mov [r14 + 1], r13b		; ypos
+			jmp block_loop
+		block_loop_skip_block:
+		cmp rcx, 5					; a worm
+		je illegal_move
+		cmp rcx, 6					; a wormhead
+		je illegal_move
+
+		mov [r14], r12b			; xpos
+		mov [r14 + 1], r13b		; ypos
+		jmp check_floor_0
+	skip_block_loop:
+	cmp rcx, 5					; a worm
+	je illegal_move
+	cmp rcx, 6					; a wormhead
+	je illegal_move
+
+	check_floor_0:
+	mov rax, r8
+	mov rcx, r9
+	add rcx, 2
+	mov byte[current_floor], 0
+	call get_current_block_info	; after floor 1, check floor 0
+	cmp rcx, 0					; air
+	je illegal_move
+	cmp rcx, 1					; ground
+	je legal_move
+	cmp rcx, 2					; a hole
+	je illegal_move
+	cmp rcx, 3					; a wormhole
+	jne skip_wormhole_check
+		mov rax, [current_level]
+		xor rbx, rbx
+		mov bl, [rax]
+		imul rbx, 3
+		inc rax
+		add rbx, rax
+		wormhole_check_loop:
+			cmp byte[rax + 2], 2
+			je legal_move
+			add rax, 3
+			cmp rax, rbx
+			jl wormhole_check_loop
+		pop rax						; cleaning up the worm head
+		call current_level_length
+		add [current_level], rax
+		cmp qword[current_level], game_complete
+		je game_completion
+
+		mov rax, next_level_text
+		call print_string
+		mov rax, [rsp + 8]
+		mov qword[rax], 0
+
+		jmp game_loop
+	skip_wormhole_check:
+	cmp rcx, 4					; a block
+	je legal_move
+
+	legal_move:					; updating the head of the worm at last
+	pop rax
 	mov [rax], r8b
 	mov [rax+1], r9b
 
-	; update worm body (but not yet head)
-	; check if those coords already have something
-	; if it's a block, first update head, then blockloop
-		; blockloop: check coords in movement direction, update block (based on air or hole too), loop if something is found in the first part
-	; if it's a wormhole, next level
-	; if it's a hole, don't
-	; if it's water, don't
-
 	jmp game_loop
+	
+	game_completion:
+	mov rax, game_completion_text
+	call print_string
 
 	quit:
 	add rsp, 16			; user input buffer, input history buffer
@@ -242,6 +361,13 @@ _start:
 	; The unix exit
 	mov rax, 0			; success
 	call exit
+
+illegal_move:		; This is a subroutine, not a function
+	pop rax				; cleanup the pointer to the wormhead
+	mov rax, [rsp + 8]
+	call pop_gamestate
+	jmp game_loop
+
 
 push_gamestate:		; (rax history_buffer -- rax history_buffer)
 	push rax
@@ -468,17 +594,26 @@ exit:			; (rax error_code -- rax syscall_returned)
 
 .data:
 	greeting.count:
-		db 229; length
+		db 255; length
 	greeting:
-		db "Welcome!", 10, "Open worm.ppm with xviewer, and put it next to this terminal.", 10,
+		db "Welcome!", 10, "Open worm.ppm with xviewer, and put it next to this terminal", 10,
+		db "Red is a hole, Black is a wormhole", 10
 		db "The controls are:", 10
 		db "e for going topleft", 10, "r for topright", 10, "d for bottomleft", 10, "f for bottomright", 10,
-		db "(those are based on keyboard layout)", 10
-		db "z for undo", 10, "q for quit", 10, "Good luck!", 10
+		db " those are based on keyboard layout", 10
+		db "z for undo", 10, "q for quit", 10, "GL!", 10
 
 		db 2
 	prompt:
 		db "> "
+
+		db 12
+	next_level_text:
+		db "Next level!", 10
+
+		db 37
+	game_completion_text:
+		db "Finished! Thanks for playing!", 10, "-Stvff", 10
 
 	image_name:
 		db "./worm.ppm", 0
@@ -497,27 +632,39 @@ exit:			; (rax error_code -- rax syscall_returned)
 		db 4, 19, 2
 		db 5, 20, 1
 		db 5, 21, 3
-		db 4
+		db 3
 		db 2, 12, 6
 		db 1, 11, 5
 		db 3, 15, 4
-		db 0, 0, 0
 	level_2:
-		db 0
-		db 0, 0, 0
-		db 0
-		db 0, 0, 0
+		db 9
+		db 1, 13, 1
+		db 2, 14, 1
+		db 2, 15, 1
+		db 3, 16, 1
+		db 3, 17, 1
+		db 4, 18, 2
+		db 4, 19, 2
+		db 5, 20, 1
+		db 5, 21, 3
+		db 4
+		db 2, 12, 6
+		db 1, 11, 5
+		db 3, 14, 4
+		db 3, 15, 4
+	game_complete:
 
 	colour_table:
 		dq water_colour, ground_colour, hole_colour, wormhole_colour, block_colour, worm_colour, worm_head_colour
 
-	water_colour:     db 100, 105, 110, 90, 95, 100
+	water_colour:     db 110, 150, 190, 110, 150, 190
 	ground_colour:    db 150, 130, 80, 130, 110, 80
 	hole_colour:      db 100, 70, 40, 150, 60, 30
 	wormhole_colour:  db 20, 20, 20, 0, 0, 0
 	block_colour:     db 100, 100, 100, 70, 70, 70
 	worm_colour:      db 220, 160, 160, 210, 150, 150
 	worm_head_colour: db 237, 170, 170, 230, 160, 160
+	;open_wormhole_colour: db 240, 240, 240, 235, 235, 235
 
 	;ppm_header.count:
 	;	dq 15
