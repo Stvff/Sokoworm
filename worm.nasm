@@ -153,6 +153,9 @@ _start:
 	mov rax, r15		; putting the data pointer back in rax
 	call write_image
 
+	; FOR LEVEL DEV PURPOSES:
+	; jmp quit
+
 	mov rax, [rsp + 8]
 	call push_gamestate
 
@@ -618,9 +621,10 @@ exit:			; (rax error_code -- rax syscall_returned)
 	image_name:
 		db "./worm.ppm", 0
 
-	current_level: dq level_1
+	current_level: dq first_level
 	current_floor: db 0
 
+	first_level:
 	level_1:
 		db 9
 		db 1, 13, 1
@@ -652,6 +656,72 @@ exit:			; (rax error_code -- rax syscall_returned)
 		db 1, 11, 5
 		db 3, 14, 4
 		db 3, 15, 4
+	level_3:
+		db 18
+					db 3, 12, 1
+				db 2, 13, 1,	3, 13, 1
+			db 2, 14, 1,	3, 14, 3,	4, 14, 1
+		db 1, 15, 1,	2, 15, 2,	3, 15, 1,	4, 15, 1
+			db 2, 16, 1,	3, 16, 1,	4, 16, 1
+				db 2, 17, 1,	3, 17, 1
+					db 3, 18, 1,	4, 18, 1
+						db 3, 19, 1
+		db 7
+		db 3, 11, 6
+		db 3, 10, 5
+		db 2, 11, 5
+		db 2, 12, 5
+		db 1, 13, 5
+		db 2, 14, 5
+		db 3, 15, 4
+	level_4:
+		db 20
+					db 3, 12, 1
+				db 2, 13, 1,	3, 13, 1
+			db 2, 14, 1,	3, 14, 1,	4, 14, 1
+					db 2, 15, 1,	3, 15, 1,	4, 15, 2
+						db 3, 16, 1,	4, 16, 1,	5, 16, 1
+				db 2, 17, 1,	3, 17, 2, 	4, 17, 1,
+					db 3, 18, 3,	4, 18, 1,	5, 18, 1
+						db 3, 19, 1,	 4, 19, 1
+		db 5
+		db 3, 14, 6
+		db 2, 13, 5
+		db 2, 12, 5
+		db 4, 14, 4
+		db 4, 16, 4
+	level_5:
+		db 16
+			db 2, 14, 1,
+					db 2, 15, 1,	3, 15, 1,	4, 15, 2
+						db 3, 16, 1,	4, 16, 1,	5, 16, 1
+				db 2, 17, 1,	3, 17, 2, 	4, 17, 1,	5, 17, 1
+					db 3, 18, 3,	4, 18, 1,	5, 18, 1
+						db 3, 19, 1,	 4, 19, 1
+		db 5
+		db 3, 14, 6
+		db 2, 13, 5
+		db 2, 12, 5
+		db 4, 14, 4
+		db 4, 16, 4
+	level_7:
+		db 18
+							db 4, 12, 1
+						db 3, 13, 1,	4, 13, 1
+					db 3, 14, 1,	4, 14, 3,	5, 14, 1
+				db 2, 15, 1,	3, 15, 1,	4, 15, 1,
+			db 2, 16, 2,			4, 16, 1
+							db 3, 17, 1,	4, 17, 1
+					db 3, 18, 1,	4, 18, 1
+			db 2, 19, 1,	3, 19, 1
+					db 3, 20, 1
+		db 6
+		db 2, 17, 6
+		db 3, 18, 5
+		db 3, 17, 5
+		db 4, 16, 5
+		db 3, 16, 4
+		db 4, 12, 4
 	game_complete:
 
 	colour_table:
